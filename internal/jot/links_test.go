@@ -135,3 +135,63 @@ func TestServerSetsRobotsNoindex(t *testing.T) {
 		t.Error("robots meta tag missing")
 	}
 }
+
+func conflictPage(title, conflictsWith, body string) string {
+	page := "---\ntype: Conflict\ntitle: " + title + "\ndescription: About " + title +
+		"\ngenerated:\n  by: process:jot\n  at: 2026-08-01T00:00:00Z\n"
+	if conflictsWith != "" {
+		page += "conflicts:\n  - " + conflictsWith + "\n"
+	}
+	return page + "---\n\n# " + title + "\n\n" + body + "\n"
+}
+
+func TestDeclaredConflictsMustResolve(t *testing.T) {
+	root := testVault(t)
+	writeConcept(t, root, "a/one", "One", longBody)
+	if err := atomicWrite(root+"/wiki/a/two.md", []byte(conflictPage("Two", "a/one", longBody)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateVault(root, true); err != nil {
+		t.Fatalf("a resolvable conflict should be valid: %v", err)
+	}
+
+	if err := atomicWrite(root+"/wiki/a/two.md", []byte(conflictPage("Two", "a/nowhere", longBody)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := validateVault(root, true)
+	if err == nil || !strings.Contains(err.Error(), "unknown concept") {
+		t.Fatalf("expected an unresolved conflict to be reported, got %v", err)
+	}
+}
+
+func TestOpenConflictIsQueuedAndRendered(t *testing.T) {
+	root := testVault(t)
+	writeConcept(t, root, "a/one", "One", longBody)
+	if err := atomicWrite(root+"/wiki/a/two.md", []byte(conflictPage("Two", "a/one", longBody)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := scanVault(root, maintainOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, f := range report.Findings {
+		if f.Kind == KindOpenConflict {
+			found = true
+			if f.Severity != SeverityWarn {
+				t.Errorf("an open contradiction should warn, got %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("open conflict was not queued: %+v", report.Findings)
+	}
+
+	res := httptest.NewRecorder()
+	newWikiHandler(root).ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/wiki/a/two", nil))
+	body := res.Body.String()
+	if !strings.Contains(body, "Contradicts") || !strings.Contains(body, "/wiki/a/one") {
+		t.Fatalf("conflict block missing from the page:\n%s", body)
+	}
+}

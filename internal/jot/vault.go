@@ -99,6 +99,19 @@ the wiki. Items needing judgement are queued, not acted on:
 Verdicts are cached against the exact content they judged, so unchanged pages
 are never re-examined.
 
+## Conflicts
+
+Record a contradiction as structure, not prose. Add a conflicts list to the
+frontmatter naming the concepts that disagree:
+
+    conflicts:
+      - systems/retrieval
+
+Every entry must resolve to a real concept; jot lint enforces that, jot
+maintain keeps the contradiction queued as a warning until it is removed, and
+the web UI badges it. Use type: Conflict for a page whose whole purpose is to
+hold an unresolved disagreement.
+
 ## Authority
 
 The marker <!-- jot:authoritative --> applies to the next Markdown block. Never

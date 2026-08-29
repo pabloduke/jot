@@ -35,6 +35,7 @@ const (
 	KindDuplicateDesc     = "duplicate-description"
 	KindDeadSource        = "dead-source"
 	KindUnverified        = "unverified"
+	KindOpenConflict      = "open-conflict"
 	KindVaultIntegrity    = "vault-integrity"
 	KindNearDuplicate     = "near-duplicate"
 	KindContradiction     = "contradiction-candidate"
@@ -267,6 +268,12 @@ func scanVault(root string, opts maintainOptions) (*MaintainReport, error) {
 		}
 		if d.EffectiveStatus() == StatusDeprecated {
 			add(KindDeprecated, SeverityInfo, "page is marked deprecated", []string{d.ID}, []string{digests[d.ID]})
+		}
+		for _, other := range d.Conflicts {
+			target := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(other), "/"), ".md")
+			pair := []string{d.ID, target}
+			sort.Strings(pair)
+			add(KindOpenConflict, SeverityWarn, "a recorded contradiction is still open", pair, digestsFor(digests, pair))
 		}
 		for _, issue := range footnoteIssues(d) {
 			add(KindUnresolvedNote, SeverityWarn, issue, []string{d.ID}, []string{digests[d.ID]})

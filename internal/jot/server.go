@@ -300,10 +300,31 @@ func (s *wikiServer) page(w http.ResponseWriter, req *http.Request) {
 	body.WriteString(`<main><h1>` + html.EscapeString(d.Title) + `</h1>`)
 	body.WriteString(meta.String())
 	body.WriteString(renderMarkdown(d, titles))
+	body.WriteString(renderConflicts(d, titles))
 	body.WriteString(renderSources(d))
 	body.WriteString(renderBacklinks(graph, titles, id))
 	body.WriteString(`</main>`)
 	writeHTML(w, d.Title+" · Jot", body.String())
+}
+
+// renderConflicts surfaces recorded contradictions as a first-class block
+// rather than leaving them as prose an agent has to notice.
+func renderConflicts(d Document, titles map[string]string) string {
+	if len(d.Conflicts) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString(`<div class="backlinks"><h2><span class="badge">Conflict</span>Contradicts</h2><ul>`)
+	for _, other := range d.Conflicts {
+		id := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(other), "/"), ".md")
+		label := titles[id]
+		if label == "" {
+			label = id
+		}
+		fmt.Fprintf(&out, `<li><a href="/wiki/%s">%s</a></li>`, pathURL(id), html.EscapeString(label))
+	}
+	out.WriteString(`</ul></div>`)
+	return out.String()
 }
 
 func renderSources(d Document) string {
@@ -586,13 +607,37 @@ func splitTableRow(line string) []string {
 
 var orderedItemPattern = regexp.MustCompile(`^(\d+)[.)]\s+(.*)$`)
 
+// leadingIndent measures a list item's indent, counting a tab as four columns.
+func leadingIndent(line string) int {
+	n := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			n++
+		case '\t':
+			n += 4
+		default:
+			return n
+		}
+	}
+	return n
+}
+
 // renderMarkdown converts a concept body to HTML. It deliberately implements a
 // small, predictable subset rather than pulling in a full CommonMark engine.
 func renderMarkdown(d Document, titles map[string]string) string {
 	lines := strings.Split(strings.ReplaceAll(d.Body, "\r\n", "\n"), "\n")
 	var out strings.Builder
 	var paragraph []string
-	inCode, listTag, authoritative := false, "", false
+	inCode, authoritative := false, false
+
+	// Lists are tracked as a stack of (tag, indent) so that indented items
+	// nest instead of flattening.
+	type listLevel struct {
+		tag    string
+		indent int
+	}
+	var lists []listLevel
 
 	badge := func() {
 		if authoritative {
@@ -609,10 +654,30 @@ func renderMarkdown(d Document, titles map[string]string) string {
 		paragraph = nil
 	}
 	closeList := func() {
-		if listTag != "" {
-			out.WriteString("</" + listTag + ">")
-			listTag = ""
+		for len(lists) > 0 {
+			out.WriteString("</" + lists[len(lists)-1].tag + ">")
+			lists = lists[:len(lists)-1]
 		}
+	}
+	// openItem reconciles the list stack with one item's indent and marker,
+	// then emits the opening <li>.
+	openItem := func(tag string, indent int) {
+		for len(lists) > 0 {
+			top := lists[len(lists)-1]
+			if indent > top.indent {
+				break
+			}
+			if indent == top.indent && tag == top.tag {
+				break
+			}
+			out.WriteString("</" + top.tag + ">")
+			lists = lists[:len(lists)-1]
+		}
+		if len(lists) == 0 || indent > lists[len(lists)-1].indent {
+			out.WriteString("<" + tag + ">")
+			lists = append(lists, listLevel{tag: tag, indent: indent})
+		}
+		out.WriteString("<li>")
 	}
 
 	for i := 0; i < len(lines); i++ {
@@ -691,24 +756,14 @@ func renderMarkdown(d Document, titles map[string]string) string {
 		}
 		if strings.HasPrefix(trim, "- ") || strings.HasPrefix(trim, "* ") || strings.HasPrefix(trim, "+ ") {
 			flushParagraph()
-			if listTag != "ul" {
-				closeList()
-				out.WriteString("<ul>")
-				listTag = "ul"
-			}
-			out.WriteString("<li>")
+			openItem("ul", leadingIndent(line))
 			badge()
 			out.WriteString(renderInline(strings.TrimSpace(trim[2:]), d.ID, titles) + "</li>")
 			continue
 		}
 		if m := orderedItemPattern.FindStringSubmatch(trim); m != nil {
 			flushParagraph()
-			if listTag != "ol" {
-				closeList()
-				out.WriteString("<ol>")
-				listTag = "ol"
-			}
-			out.WriteString("<li>")
+			openItem("ol", leadingIndent(line))
 			badge()
 			out.WriteString(renderInline(m[2], d.ID, titles) + "</li>")
 			continue

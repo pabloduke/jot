@@ -168,6 +168,17 @@ jot import --prefix vendor ./their-bundle
 
 Export contains only compiled concepts, the `index.md` hierarchy, and `log.md`—never raw captures or `.jot` state.
 
+## Conflicts
+
+Contradictions are recorded as structure rather than prose:
+
+```yaml
+conflicts:
+  - systems/retrieval
+```
+
+Every entry must resolve to a real concept. `jot lint` enforces that, `jot maintain` keeps the contradiction queued as a warning until it is removed, and the wiki badges it on the page. A page whose whole purpose is to hold an unresolved disagreement can use `type: Conflict`.
+
 ## Authority
 
 Human Markdown edits and agent edits are treated equally. To protect one statement, mark its next Markdown block:

@@ -86,3 +86,33 @@ func TestFootnotesRenderAsSourceReferences(t *testing.T) {
 		t.Fatalf("footnote did not render:\n%s", out)
 	}
 }
+
+func TestRendererNestsLists(t *testing.T) {
+	out := render(t, "- outer\n  - inner\n  - inner two\n- outer two\n", nil)
+	want := "<ul><li>outer</li><ul><li>inner</li><li>inner two</li></ul><li>outer two</li></ul>"
+	if !strings.Contains(out, want) {
+		t.Fatalf("nested list wrong:\ngot  %s\nwant %s", out, want)
+	}
+}
+
+func TestRendererNestsMixedListTypes(t *testing.T) {
+	out := render(t, "1. first\n   - detail\n2. second\n", nil)
+	for _, want := range []string{"<ol>", "<ul><li>detail</li></ul>", "<li>second</li>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "<ol>") != 1 {
+		t.Errorf("outer ordered list should not restart:\n%s", out)
+	}
+}
+
+func TestRendererClosesAllListLevels(t *testing.T) {
+	out := render(t, "- a\n  - b\n    - c\n\nAfter.\n", nil)
+	if strings.Count(out, "<ul>") != strings.Count(out, "</ul>") {
+		t.Fatalf("unbalanced list tags:\n%s", out)
+	}
+	if !strings.Contains(out, "<p>After.</p>") {
+		t.Fatalf("paragraph after list missing:\n%s", out)
+	}
+}

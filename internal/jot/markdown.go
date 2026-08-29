@@ -25,6 +25,7 @@ type Document struct {
 	Generated   *Attestation   `json:"generated,omitempty"`
 	Verified    []Attestation  `json:"verified,omitempty"`
 	Sources     []Source       `json:"sources,omitempty"`
+	Conflicts   []string       `json:"conflicts,omitempty"`
 	Trust       string         `json:"trust"`
 	Body        string         `json:"body,omitempty"`
 }
@@ -96,6 +97,7 @@ func parseDocument(path string, b []byte) (Document, error) {
 		Generated:   fmAttestation(raw, "generated"),
 		Verified:    fmAttestations(raw, "verified"),
 		Sources:     fmSources(raw, "sources"),
+		Conflicts:   fmStrings(raw, "conflicts"),
 		Body:        body,
 	}
 	d.Trust = trustTier(d.Verified)
@@ -434,6 +436,7 @@ func validateVault(root string, allowAuthorityChange bool) (LintResult, error) {
 
 	graph := buildLinkGraph(root, docs)
 	result.Issues = append(result.Issues, graph.Issues...)
+	result.Issues = append(result.Issues, conflictIssues(docs)...)
 
 	current := map[string]AuthorityRecord{}
 	for _, d := range docs {
@@ -515,6 +518,29 @@ func refreshDerived(root string, allowAuthorityChange bool) (LintResult, error) 
 		}
 	}
 	return result, saveManifest(root, m)
+}
+
+// conflictIssues checks that every declared conflict points at a real concept.
+// Recording a contradiction is only useful if the other side can be found.
+func conflictIssues(docs []Document) []string {
+	byID := make(map[string]bool, len(docs))
+	for _, d := range docs {
+		byID[d.ID] = true
+	}
+	var issues []string
+	for _, d := range docs {
+		for _, other := range d.Conflicts {
+			target := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(other), "/"), ".md")
+			if target == d.ID {
+				issues = append(issues, fmt.Sprintf("%s: declares a conflict with itself", d.Path))
+				continue
+			}
+			if !byID[target] {
+				issues = append(issues, fmt.Sprintf("%s: conflicts with unknown concept %q", d.Path, other))
+			}
+		}
+	}
+	return issues
 }
 
 func isoNow() string {
