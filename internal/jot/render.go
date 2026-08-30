@@ -63,15 +63,25 @@ func renderInline(text, currentID string, titles map[string]string) string {
 			target := text[loc[4]:loc[5]]
 			href, external := wikiHref(target, currentID)
 			label := target
+			cls := ""
 			if loc[6] >= 0 && text[loc[6]:loc[7]] != "" {
 				label = text[loc[6]:loc[7]]
+				if !external {
+					if _, ok := titles[conceptIDFromHref(href)]; !ok {
+						cls = ` class="stub"`
+					}
+				}
 			} else if !external {
 				// Prefer the target page's own title over the raw slug.
-				if title, ok := titles[conceptIDFromHref(href)]; ok && title != "" {
-					label = title
+				if title, ok := titles[conceptIDFromHref(href)]; ok {
+					if title != "" {
+						label = title
+					}
+				} else {
+					cls = ` class="stub"`
 				}
 			}
-			fmt.Fprintf(&out, `<a href="%s">%s</a>`, html.EscapeString(href), html.EscapeString(label))
+			fmt.Fprintf(&out, `<a href="%s"%s>%s</a>`, html.EscapeString(href), cls, html.EscapeString(label))
 		case loc[8] >= 0: // footnote
 			id := text[loc[8]:loc[9]]
 			fmt.Fprintf(&out, `<sup><a href="#source-%s">%s</a></sup>`, html.EscapeString(id), html.EscapeString(id))

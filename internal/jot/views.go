@@ -231,6 +231,10 @@ func (s *wikiServer) page(w http.ResponseWriter, req *http.Request) {
 	var body strings.Builder
 	body.WriteString(breadcrumbs(id, d.Title))
 	body.WriteString(`<h1>` + html.EscapeString(d.Title) + `</h1>`)
+	
+	absPath, _ := filepath.Abs(filepath.Join(s.root, filepath.FromSlash("wiki/"+id+".md")))
+	body.WriteString(fmt.Sprintf(`<a href="vscode://file/%s" class="copy-btn" style="margin-top:-3rem;text-decoration:none">✏️ Edit</a>`, html.EscapeString(absPath)))
+	
 	body.WriteString(s.pageMeta(snap, d, now))
 	body.WriteString(renderMarkdown(d, snap.titles))
 	body.WriteString(renderConflicts(d, snap.titles))
@@ -708,4 +712,52 @@ func (s *wikiServer) log(w http.ResponseWriter, req *http.Request) {
 	}
 	s.render(w, shell{Title: "Log · Jot", NavKey: "log",
 		Sidebar: s.sidebar(snap, "", nil), Body: body.String()})
+}
+
+func (s *wikiServer) maintenancePage(w http.ResponseWriter, req *http.Request) {
+	snap, err := s.site(req.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	st, err := loadMaintainState(s.root)
+	if err != nil {
+		http.Error(w, "Failed to load maintenance state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var body strings.Builder
+	body.WriteString(`<p class="crumbs"><a href="/">Index</a> / Maintenance</p>`)
+	body.WriteString(`<h1>Maintenance Dashboard</h1>`)
+	body.WriteString(`<p class="meta">Automated findings that need human or AI resolution.</p>`)
+
+	open := make([]*Finding, 0)
+	for _, f := range st.Findings {
+		if f.Status == "open" {
+			open = append(open, f)
+		}
+	}
+	if len(open) == 0 {
+		body.WriteString(`<div style="padding:3rem 0;text-align:center;color:var(--muted)"><h2>All clear!</h2><p>No open maintenance tasks.</p></div>`)
+	} else {
+		body.WriteString(`<ul class="rows">`)
+		for _, f := range open {
+			fmt.Fprintf(&body, `<li><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:bold;text-transform:uppercase;background:var(--warn);color:#fff;margin-right:10px;">%s</span>`, html.EscapeString(f.Kind))
+			var links []string
+			for _, cid := range f.Concepts {
+				links = append(links, fmt.Sprintf(`<a href="/wiki/%s">%s</a>`, html.EscapeString(cid), html.EscapeString(cid)))
+			}
+			if len(links) > 0 {
+				fmt.Fprintf(&body, `<span>%s</span> `, strings.Join(links, " &middot; "))
+			}
+			fmt.Fprintf(&body, `<span class="why" style="flex:1">%s</span>`, html.EscapeString(f.Detail))
+			fmt.Fprintf(&body, `</li>`)
+		}
+		body.WriteString(`</ul>`)
+	}
+
+	s.render(w, shell{
+		Title: "Maintenance · Jot", NavKey: "index",
+		Sidebar: s.sidebar(snap, "", nil), Body: body.String(),
+	})
 }

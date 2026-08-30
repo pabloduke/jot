@@ -10,6 +10,9 @@ const wikiCSS = `
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--text); font:17px/1.65 ui-serif,Georgia,Cambria,"Times New Roman",serif; }
 a { color:var(--accent); text-decoration-thickness:.08em; text-underline-offset:.15em; }
+a.stub { color:var(--warn); text-decoration-style:dashed; }
+.copy-btn { float:right; background:var(--bg); border:1px solid var(--line); color:var(--muted); border-radius:.3rem; padding:.2rem .5rem; font-size:.75rem; cursor:pointer; margin:-0.5rem -0.5rem 0 0; }
+.copy-btn:hover { color:var(--accent); border-color:var(--accent); }
 
 header { border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:20; }
 .bar { max-width:1400px; margin:auto; padding:.8rem 1.5rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
@@ -41,7 +44,8 @@ aside a { display:block; padding:.2rem .5rem; border-radius:.3rem; text-decorati
 aside a:hover { background:var(--code); }
 aside a[aria-current="page"] { background:var(--code); color:var(--accent); font-weight:600; }
 aside .toc a { color:var(--muted); border-left:2px solid var(--line); border-radius:0; }
-aside .toc a:hover { color:var(--accent); border-left-color:var(--accent); }
+aside .toc a:hover, aside .toc a.active { color:var(--accent); border-left-color:var(--accent); }
+aside .toc a.active { font-weight:600; }
 aside .toc .l3 { padding-left:1.1rem; } aside .toc .l4 { padding-left:1.8rem; }
 aside details > summary { cursor:pointer; font:700 .72rem ui-sans-serif,system-ui,sans-serif; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:.5rem; }
 aside details[open] > summary { margin-bottom:.5rem; }
@@ -261,4 +265,37 @@ const wikiJS = `(function(){
       if(link){ e.preventDefault(); window.location=link.href; }
     }
   });
+
+  /* ---- copy buttons -------------------------------------------------- */
+  document.querySelectorAll("pre > code").forEach(function(code) {
+    var btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", function() {
+      navigator.clipboard.writeText(code.innerText).then(function() {
+        btn.textContent = "Copied!";
+        setTimeout(function() { btn.textContent = "Copy"; }, 2000);
+      });
+    });
+    code.parentNode.insertBefore(btn, code);
+  });
+
+  /* ---- scroll spy ---------------------------------------------------- */
+  var tocLinks = document.querySelectorAll("aside .toc a");
+  var headings = Array.prototype.slice.call(document.querySelectorAll("main h1, main h2, main h3, main h4, main h5, main h6"));
+  if (tocLinks.length && headings.length && window.IntersectionObserver) {
+    var activeId = "";
+    var observer = new IntersectionObserver(function(entries) {
+      var found = false;
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) { activeId = entry.target.id; found = true; }
+      });
+      if (!found) return;
+      tocLinks.forEach(function(a) {
+        if (a.getAttribute("href") === "#" + activeId) a.classList.add("active");
+        else a.classList.remove("active");
+      });
+    }, { rootMargin: "-80px 0px -80% 0px" });
+    headings.forEach(function(h) { if(h.id) observer.observe(h); });
+  }
 })();`

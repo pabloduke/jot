@@ -116,8 +116,10 @@ func newWikiHandler(root string) http.Handler {
 	mux.HandleFunc("GET /wiki/", s.page)
 	mux.HandleFunc("GET /search", s.search)
 	mux.HandleFunc("GET /api/search", s.apiSearch)
+	mux.HandleFunc("POST /api/capture", s.apiCapture)
 	mux.HandleFunc("GET /recent", s.recent)
 	mux.HandleFunc("GET /loose-ends", s.looseEndsPage)
+	mux.HandleFunc("GET /maintenance", s.maintenancePage)
 	mux.HandleFunc("GET /tags", s.tags)
 	mux.HandleFunc("GET /tags/", s.tags)
 	mux.HandleFunc("GET /graph", s.graph)
@@ -160,6 +162,30 @@ func (s *wikiServer) favicon(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write(faviconSVG)
+}
+
+func (s *wikiServer) apiCapture(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Content   string   `json:"content"`
+		SourceURL string   `json:"url"`
+		Tags      []string `json:"tags"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	c, err := addCapture(s.root, "", "api", payload.SourceURL, payload.Content, payload.Tags)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(c)
 }
 
 func (s *wikiServer) health(w http.ResponseWriter, _ *http.Request) {
