@@ -54,6 +54,41 @@ func TestScanFindsStructuralProblems(t *testing.T) {
 	}
 }
 
+func TestScanKeepsDistinctBrokenLinkFindings(t *testing.T) {
+	root := testVault(t)
+	writeConcept(t, root, "work/one", "One", longBody+"\n\n[[missing-one]]")
+	writeConcept(t, root, "work/two", "Two", longBody+"\n\n[[missing-two]]")
+
+	report, err := scanVault(root, maintainOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, f := range report.Findings {
+		if f.Kind == KindBrokenLink {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("broken-link findings = %d, want 2: %+v", count, report.Findings)
+	}
+}
+
+func TestValidatePublicURLRejectsPrivateAddresses(t *testing.T) {
+	ctx := context.Background()
+	for _, raw := range []string{
+		"http://127.0.0.1/", "http://192.168.1.2/", "http://169.254.169.254/",
+		"http://100.64.0.1/", "http://[::1]/", "http://localhost/", "ftp://example.com/",
+	} {
+		if err := validatePublicURL(ctx, raw); err == nil {
+			t.Errorf("validatePublicURL(%q) succeeded", raw)
+		}
+	}
+	if err := validatePublicURL(ctx, "https://8.8.8.8/"); err != nil {
+		t.Fatalf("public address was rejected: %v", err)
+	}
+}
+
 func TestScanDetectsStaleAndDeprecated(t *testing.T) {
 	root := testVault(t)
 	page := "---\ntype: Concept\ntitle: Old\ndescription: Old page\nstatus: deprecated\n" +
@@ -272,6 +307,63 @@ func TestIdempotentRescanPreservesQueuedWork(t *testing.T) {
 	if len(batch.Orders) != first.ModelQueued {
 		t.Fatalf("drained %d orders, expected %d", len(batch.Orders), first.ModelQueued)
 	}
+}
+
+func TestEditedPairRefreshesOneStableWorkOrder(t *testing.T) {
+	root := testVault(t)
+	writeConcept(t, root, "a/one", "One", longBody)
+	writeConcept(t, root, "a/two", "Two", longBody)
+
+	first, err := scanVault(root, maintainOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pair *Finding
+	for _, f := range first.Findings {
+		if f.NeedsModel && len(f.Concepts) == 2 {
+			pair = f
+			break
+		}
+	}
+	if pair == nil {
+		t.Fatalf("expected pair work, got %+v", first.Findings)
+	}
+	if _, err := drainWorkOrders(context.Background(), root, 10, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	writeConcept(t, root, "a/one", "One", longBody+" One small clarification keeps this page current.")
+	second, err := scanVault(root, maintainOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, f := range second.Findings {
+		if f.Kind == pair.Kind && sameStrings(f.Concepts, pair.Concepts) {
+			count++
+			if f.ID != pair.ID {
+				t.Errorf("edited pair changed finding ID from %s to %s", pair.ID, f.ID)
+			}
+			if f.Status != StatusOpen {
+				t.Errorf("refreshed dispatched finding status = %s, want open", f.Status)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("edited pair produced %d work orders, want 1: %+v", count, second.Findings)
+	}
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // A finding whose page has been deleted is dropped rather than kept forever.

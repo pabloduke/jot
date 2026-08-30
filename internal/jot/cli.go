@@ -110,7 +110,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	case "open", "edit":
 		return r.withVault(false, false, func(root string) error { return r.openIn(root, args[0], args[1:]) })
 	case "apply":
-		return r.withVault(false, false, func(root string) error { return r.apply(root, args[1:]) })
+		return r.apply(args[1:])
 	case "publish":
 		return r.withVault(true, true, func(root string) error { return r.publish(root, args[1:]) })
 	case "promote":
@@ -126,7 +126,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	case "status":
 		return r.withVault(false, false, func(root string) error { return r.status(root, args[1:]) })
 	case "lint":
-		return r.withVault(false, false, func(root string) error { return r.lint(root, args[1:]) })
+		// Lint must be able to inspect invalid, uncommitted edits. Running the
+		// normal pre-command synchronization would validate those edits before
+		// the lint handler can report or fix them.
+		return r.withVault(true, false, func(root string) error { return r.lint(root, args[1:]) })
 	case "serve":
 		return r.serve(args[1:])
 	case "completion":
@@ -602,7 +605,7 @@ func (r *runner) openIn(root, mode string, args []string) error {
 	return nil
 }
 
-func (r *runner) apply(root string, args []string) error {
+func (r *runner) apply(args []string) error {
 	fs := newFlags("apply", r.errOut)
 	stdin := fs.Bool("stdin", false, "read transaction JSON from stdin")
 	dryRun := fs.Bool("dry-run", false, "validate and report without writing")
@@ -624,22 +627,46 @@ func (r *runner) apply(root string, args []string) error {
 	if *dryRun {
 		req.DryRun = true
 	}
-	result, err := applyRequest(r.ctx, root, req)
-	if err != nil {
-		return err
-	}
-	if *asJSON {
-		return jsonOut(r.out, result)
-	}
-	if result.DryRun {
-		fmt.Fprintf(r.out, "Dry run OK: %d path changes would be written\n", len(result.Changed))
-		for _, p := range result.Changed {
-			fmt.Fprintf(r.out, "  %s\n", p)
+	run := func(root string) error {
+		result, err := applyRequest(r.ctx, root, req)
+		if err != nil {
+			return err
 		}
+		if *asJSON {
+			return jsonOut(r.out, result)
+		}
+		if result.DryRun {
+			fmt.Fprintf(r.out, "Dry run OK: %d path changes would be written\n", len(result.Changed))
+			for _, p := range result.Changed {
+				fmt.Fprintf(r.out, "  %s\n", p)
+			}
+			return nil
+		}
+		fmt.Fprintf(r.out, "Published %d path changes at %s\n", len(result.Changed), result.Revision)
 		return nil
 	}
-	fmt.Fprintf(r.out, "Published %d path changes at %s\n", len(result.Changed), result.Revision)
-	return nil
+
+	if req.DryRun {
+		// A dry run validates the vault exactly as it is. In particular, it must
+		// not scaffold files, publish local edits, pull, or push before reporting.
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(cfg.Vault, ".jot", "manifest.json")); err != nil {
+			if os.IsNotExist(err) {
+				return codedf(ExitNotInited, "not initialized; run jot init OWNER/REPO or set JOT_DIR")
+			}
+			return err
+		}
+		lock, err := lockVault(cfg.Vault)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		return run(cfg.Vault)
+	}
+	return r.withVault(false, false, run)
 }
 
 func (r *runner) publish(root string, args []string) error {

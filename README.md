@@ -7,7 +7,7 @@ Jot combines the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/
 ## Requirements
 
 - Linux or macOS
-- Go 1.25 or a downloaded release binary
+- Go 1.24 or a downloaded release binary
 - Git
 - Authenticated [GitHub CLI](https://cli.github.com/) account
 

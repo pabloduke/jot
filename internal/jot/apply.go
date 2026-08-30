@@ -75,17 +75,21 @@ func applyRequest(ctx context.Context, root string, req ApplyRequest) (ApplyResu
 	}
 	var moves []action
 	var changed []string
-	seen := map[string]bool{}
+	// Every path that receives final content must be unique across the whole
+	// transaction. Move/archive sources may also be upserted intentionally (move
+	// the old page away, then create its replacement), so only destinations are
+	// tracked here.
+	targets := map[string]bool{}
 	for _, up := range req.Upserts {
 		id, err := safeID(up.ID)
 		if err != nil {
 			return ApplyResult{}, err
 		}
 		rel := filepath.ToSlash(filepath.Join("wiki", id+".md"))
-		if seen[rel] {
+		if targets[rel] {
 			return ApplyResult{}, fmt.Errorf("duplicate transaction target %s", rel)
 		}
-		seen[rel] = true
+		targets[rel] = true
 		if _, err := validateConcept(rel, []byte(up.Content)); err != nil {
 			return ApplyResult{}, err
 		}
@@ -104,6 +108,11 @@ func applyRequest(ctx context.Context, root string, req ApplyRequest) (ApplyResu
 		if err != nil {
 			return ApplyResult{}, err
 		}
+		toRel := filepath.ToSlash(filepath.Join("wiki", to+".md"))
+		if targets[toRel] {
+			return ApplyResult{}, fmt.Errorf("duplicate transaction target %s", toRel)
+		}
+		targets[toRel] = true
 		moves = append(moves, action{filepath.Join(root, "wiki", filepath.FromSlash(from)+".md"), filepath.Join(root, "wiki", filepath.FromSlash(to)+".md")})
 		changed = append(changed, "wiki/"+from+".md", "wiki/"+to+".md")
 	}
@@ -113,9 +122,14 @@ func applyRequest(ctx context.Context, root string, req ApplyRequest) (ApplyResu
 			return ApplyResult{}, err
 		}
 		name := filepath.Base(id) + ".md"
-		to := filepath.Join(root, "wiki", "archive", time.Now().UTC().Format("20060102")+"-"+name)
+		toRel := filepath.ToSlash(filepath.Join("wiki", "archive", time.Now().UTC().Format("20060102")+"-"+name))
+		to := filepath.Join(root, filepath.FromSlash(toRel))
+		if targets[toRel] {
+			return ApplyResult{}, fmt.Errorf("duplicate transaction target %s", toRel)
+		}
+		targets[toRel] = true
 		moves = append(moves, action{filepath.Join(root, "wiki", filepath.FromSlash(id)+".md"), to})
-		changed = append(changed, "wiki/"+id+".md", filepath.ToSlash(strings.TrimPrefix(to, root+string(filepath.Separator))))
+		changed = append(changed, "wiki/"+id+".md", toRel)
 	}
 
 	if req.DryRun {

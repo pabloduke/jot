@@ -165,6 +165,6 @@ func (s *wikiServer) favicon(w http.ResponseWriter, _ *http.Request) {
 func (s *wikiServer) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "ok", "wiki": filepath.Join(s.root, "wiki"), "version": Version(),
+		"status": "ok", "version": Version(),
 	})
 }

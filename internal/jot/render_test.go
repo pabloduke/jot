@@ -89,7 +89,7 @@ func TestFootnotesRenderAsSourceReferences(t *testing.T) {
 
 func TestRendererNestsLists(t *testing.T) {
 	out := render(t, "- outer\n  - inner\n  - inner two\n- outer two\n", nil)
-	want := "<ul><li>outer</li><ul><li>inner</li><li>inner two</li></ul><li>outer two</li></ul>"
+	want := "<ul><li>outer<ul><li>inner</li><li>inner two</li></ul></li><li>outer two</li></ul>"
 	if !strings.Contains(out, want) {
 		t.Fatalf("nested list wrong:\ngot  %s\nwant %s", out, want)
 	}
@@ -97,7 +97,7 @@ func TestRendererNestsLists(t *testing.T) {
 
 func TestRendererNestsMixedListTypes(t *testing.T) {
 	out := render(t, "1. first\n   - detail\n2. second\n", nil)
-	for _, want := range []string{"<ol>", "<ul><li>detail</li></ul>", "<li>second</li>"} {
+	for _, want := range []string{"<ol><li>first<ul>", "<ul><li>detail</li></ul></li>", "<li>second</li>"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}

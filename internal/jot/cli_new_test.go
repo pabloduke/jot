@@ -47,6 +47,23 @@ func runCLIErr(t *testing.T, stdin []byte, args ...string) error {
 	return Run(context.Background(), args, &out, &errOut)
 }
 
+func initLocalGit(t *testing.T, root string) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := command(ctx, root, "git", "init", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{"user.name", "Jot Test"}, {"user.email", "jot@example.test"}} {
+		if _, err := command(ctx, root, "git", "config", pair[0], pair[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := commitAll(ctx, root, "init"); err != nil {
+		t.Fatal(err)
+	}
+	return currentRevision(ctx, root)
+}
+
 func contextHits(t *testing.T, out string) []Chunk {
 	t.Helper()
 	var result struct {
@@ -92,6 +109,31 @@ func TestApplyDryRunStillRejectsInvalidContent(t *testing.T) {
 	payload, _ := json.Marshal(tx)
 	if err := runCLIErr(t, payload, "apply", "--stdin", "--dry-run"); err == nil {
 		t.Fatal("dry run must still validate")
+	}
+}
+
+func TestApplyDryRunDoesNotSynchronizeDirtyVault(t *testing.T) {
+	root := testVault(t)
+	t.Setenv("JOT_DIR", root)
+	head := initLocalGit(t, root)
+	t.Setenv("JOT_NO_SYNC", "")
+	writeConcept(t, root, "work/local-edit", "Local Edit", longBody)
+
+	tx := ApplyRequest{
+		Summary: "validate another concept",
+		Upserts: []Upsert{{ID: "work/proposed", Content: validConcept}},
+	}
+	payload, _ := json.Marshal(tx)
+	runCLI(t, payload, "apply", "--stdin", "--dry-run", "--json")
+
+	if got := currentRevision(context.Background(), root); got != head {
+		t.Fatalf("dry run changed HEAD from %s to %s", head, got)
+	}
+	if index := readFileString(t, filepath.Join(root, "wiki", "index.md")); strings.Contains(index, "Local Edit") {
+		t.Fatal("dry run regenerated derived indexes")
+	}
+	if _, err := os.Stat(filepath.Join(root, "wiki", "work", "proposed.md")); !os.IsNotExist(err) {
+		t.Fatalf("dry run wrote proposed page: %v", err)
 	}
 }
 
@@ -258,6 +300,24 @@ func TestLintExitCodeSignalsFindings(t *testing.T) {
 	}
 	if code := ExitCode(err); code != ExitLintIssues {
 		t.Fatalf("exit code = %d, want %d", code, ExitLintIssues)
+	}
+}
+
+func TestLintReportsDirtyInvalidPageWithoutPreSync(t *testing.T) {
+	root := testVault(t)
+	t.Setenv("JOT_DIR", root)
+	head := initLocalGit(t, root)
+	t.Setenv("JOT_NO_SYNC", "")
+	if err := atomicWrite(filepath.Join(root, "wiki", "broken.md"), []byte("no frontmatter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runCLIErr(t, nil, "lint")
+	if code := ExitCode(err); code != ExitLintIssues {
+		t.Fatalf("exit code = %d, want %d (err=%v)", code, ExitLintIssues, err)
+	}
+	if got := currentRevision(context.Background(), root); got != head {
+		t.Fatalf("lint committed invalid edits: HEAD changed from %s to %s", head, got)
 	}
 }
 

@@ -79,4 +79,7 @@ func TestWikiServerHealth(t *testing.T) {
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"status":"ok"`) {
 		t.Fatalf("unexpected health response: %d %s", res.Code, res.Body.String())
 	}
+	if strings.Contains(res.Body.String(), root) || strings.Contains(res.Body.String(), `"wiki"`) {
+		t.Fatalf("health response leaked vault information: %s", res.Body.String())
+	}
 }

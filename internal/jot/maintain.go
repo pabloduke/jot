@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,8 +199,21 @@ func scanVault(root string, opts maintainOptions) (*MaintainReport, error) {
 	report := &MaintainReport{Scanned: len(docs)}
 	found := map[string]*Finding{}
 
+	findingParts := func(kind string, concepts []string, detail string) []string {
+		parts := append([]string(nil), concepts...)
+		// Model work is one question about a stable concept or concept pair.
+		// Its detail can contain a changing similarity score, so including detail
+		// would create a second queued item every time either page changes.
+		if modelKind(kind) {
+			return parts
+		}
+		// Some checks (for example broken links) have no associated concept.
+		// Detail is therefore part of every identity: it prevents independent
+		// findings of the same kind on one page, or across the vault, collapsing.
+		return append(parts, detail)
+	}
 	add := func(kind, severity, detail string, concepts []string, digests []string) {
-		id := findingID(kind, concepts...)
+		id := findingID(kind, findingParts(kind, concepts, detail)...)
 		if _, ok := found[id]; ok {
 			return
 		}
@@ -212,13 +228,13 @@ func scanVault(root string, opts maintainOptions) (*MaintainReport, error) {
 	// about this exact content. On a hit the finding is restored to resolved
 	// carrying the remembered verdict, so a revert closes the loop instead of
 	// leaving a stale open item behind.
-	cached := func(kind string, concepts, digests []string) bool {
+	cached := func(kind, detail string, concepts, digests []string) bool {
 		rec, ok := state.Verdicts[verdictKey(kind, digests...)]
 		if !ok {
 			return false
 		}
 		report.CacheHits++
-		id := findingID(kind, concepts...)
+		id := findingID(kind, findingParts(kind, concepts, detail)...)
 		f, exists := state.Findings[id]
 		if !exists {
 			f = &Finding{
@@ -348,14 +364,15 @@ func scanVault(root string, opts maintainOptions) (*MaintainReport, error) {
 			} else if n.Similarity < contradictionFloor {
 				continue
 			}
-			if cached(kind, pair, pairDigests) {
+			if cached(kind, detail, pair, pairDigests) {
 				continue
 			}
 			add(kind, SeverityInfo, detail, pair, pairDigests)
 		}
 		d := byID[id]
-		if strings.TrimSpace(d.Description) != "" && !cached(KindDescriptionDrift, []string{id}, []string{digests[id]}) {
-			add(KindDescriptionDrift, SeverityInfo, "page changed; confirm the description still matches the body",
+		driftDetail := "page changed; confirm the description still matches the body"
+		if strings.TrimSpace(d.Description) != "" && !cached(KindDescriptionDrift, driftDetail, []string{id}, []string{digests[id]}) {
+			add(KindDescriptionDrift, SeverityInfo, driftDetail,
 				[]string{id}, []string{digests[id]})
 		}
 	}
@@ -363,15 +380,18 @@ func scanVault(root string, opts maintainOptions) (*MaintainReport, error) {
 	// --- reconcile ---------------------------------------------------------
 	for id, f := range found {
 		if existing, ok := state.Findings[id]; ok {
+			unchanged := sameDigests(existing.Digests, f.Digests)
 			if existing.Status == StatusResolved || existing.Status == StatusDismissed {
 				// A closed finding whose content is unchanged stays closed.
-				if sameDigests(existing.Digests, f.Digests) {
+				if unchanged {
 					continue
 				}
 			}
 			existing.Detail = f.Detail
 			existing.Digests = f.Digests
-			if existing.Status != StatusDispatched {
+			// A dispatched order is valid only for the content it carried. If a
+			// referenced page changed, make the refreshed order drainable again.
+			if existing.Status != StatusDispatched || !unchanged {
 				existing.Status = StatusOpen
 			}
 			continue
@@ -483,12 +503,13 @@ func stripMarkdown(s string) string {
 }
 
 func checkSourceURLs(docs []Document) []string {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := publicURLClient()
 	seen := map[string]bool{}
 	var issues []string
 	for _, d := range docs {
 		for _, src := range d.Sources {
-			if !strings.HasPrefix(src.Resource, "http://") && !strings.HasPrefix(src.Resource, "https://") {
+			if err := validatePublicURL(context.Background(), src.Resource); err != nil {
+				issues = append(issues, fmt.Sprintf("%s: source URL is not safe to check %s: %v", d.Path, src.Resource, err))
 				continue
 			}
 			if seen[src.Resource] {
@@ -511,6 +532,91 @@ func checkSourceURLs(docs []Document) []string {
 		}
 	}
 	return issues
+}
+
+// validatePublicURL rejects URLs that could cause optional source checking to
+// reach loopback, link-local, or private-network services. Source metadata can
+// come from imported bundles, so it must not be treated as a trusted endpoint.
+func validatePublicURL(ctx context.Context, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fmt.Errorf("must be an absolute http or https URL")
+	}
+	_, err = lookupPublicIPs(ctx, u.Hostname())
+	return err
+}
+
+func lookupPublicIPs(ctx context.Context, host string) ([]net.IP, error) {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return nil, fmt.Errorf("host resolves locally")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !isPublicIP(ip) {
+			return nil, fmt.Errorf("host is not publicly routable")
+		}
+		return []net.IP{ip}, nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve host: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("host has no addresses")
+	}
+	for _, ip := range ips {
+		if !isPublicIP(ip) {
+			return nil, fmt.Errorf("host resolves to a non-public address")
+		}
+	}
+	return ips, nil
+}
+
+func isPublicIP(ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return false
+	}
+	// Shared-address space is not public Internet space even though it is
+	// neither RFC1918 nor link-local.
+	return !netip.MustParsePrefix("100.64.0.0/10").Contains(addr)
+}
+
+func publicURLClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := lookupPublicIPs(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return validatePublicURL(req.Context(), req.URL.String())
+		},
+	}
 }
 
 // --- work orders ----------------------------------------------------------

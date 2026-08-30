@@ -246,27 +246,41 @@ func renderMarkdown(d Document, titles map[string]string) string {
 	}
 	closeList := func() {
 		for len(lists) > 0 {
-			out.WriteString("</" + lists[len(lists)-1].tag + ">")
+			out.WriteString("</li></" + lists[len(lists)-1].tag + ">")
 			lists = lists[:len(lists)-1]
 		}
 	}
 	// openItem reconciles the list stack with one item's indent and marker,
 	// then emits the opening <li>.
 	openItem := func(tag string, indent int) {
-		for len(lists) > 0 {
+		for len(lists) > 0 && indent < lists[len(lists)-1].indent {
 			top := lists[len(lists)-1]
-			if indent > top.indent {
-				break
-			}
-			if indent == top.indent && tag == top.tag {
-				break
-			}
-			out.WriteString("</" + top.tag + ">")
+			out.WriteString("</li></" + top.tag + ">")
 			lists = lists[:len(lists)-1]
 		}
-		if len(lists) == 0 || indent > lists[len(lists)-1].indent {
+		if len(lists) == 0 {
 			out.WriteString("<" + tag + ">")
 			lists = append(lists, listLevel{tag: tag, indent: indent})
+			out.WriteString("<li>")
+			return
+		}
+
+		top := &lists[len(lists)-1]
+		if indent > top.indent {
+			// The parent <li> deliberately remains open so the nested list is
+			// valid HTML content of that item.
+			out.WriteString("<" + tag + ">")
+			lists = append(lists, listLevel{tag: tag, indent: indent})
+			out.WriteString("<li>")
+			return
+		}
+
+		// A sibling closes the preceding item. Switching marker type at the
+		// same indentation also closes and replaces the surrounding list.
+		out.WriteString("</li>")
+		if tag != top.tag {
+			out.WriteString("</" + top.tag + "><" + tag + ">")
+			top.tag = tag
 		}
 		out.WriteString("<li>")
 	}
@@ -356,14 +370,14 @@ func renderMarkdown(d Document, titles map[string]string) string {
 			flushParagraph()
 			openItem("ul", leadingIndent(line))
 			badge()
-			out.WriteString(renderInline(strings.TrimSpace(trim[2:]), d.ID, titles) + "</li>")
+			out.WriteString(renderInline(strings.TrimSpace(trim[2:]), d.ID, titles))
 			continue
 		}
 		if m := orderedItemPattern.FindStringSubmatch(trim); m != nil {
 			flushParagraph()
 			openItem("ol", leadingIndent(line))
 			badge()
-			out.WriteString(renderInline(m[2], d.ID, titles) + "</li>")
+			out.WriteString(renderInline(m[2], d.ID, titles))
 			continue
 		}
 		if strings.HasPrefix(trim, "> ") {

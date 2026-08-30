@@ -64,3 +64,23 @@ func TestNoMaterialRejectsChanges(t *testing.T) {
 		t.Fatal("expected no-material validation error")
 	}
 }
+
+func TestApplyRejectsUpsertAtMoveDestination(t *testing.T) {
+	root := testVault(t)
+	writeConcept(t, root, "work/original", "Original", longBody)
+
+	_, err := applyRequest(context.Background(), root, ApplyRequest{
+		Summary: "conflicting targets",
+		Moves:   []Move{{From: "work/original", To: "work/moved"}},
+		Upserts: []Upsert{{ID: "work/moved", Content: validConcept}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate transaction target") {
+		t.Fatalf("expected duplicate-target rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "wiki", "work", "original.md")); err != nil {
+		t.Fatalf("move source changed despite validation failure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "wiki", "work", "moved.md")); !os.IsNotExist(err) {
+		t.Fatalf("move destination exists despite validation failure: %v", err)
+	}
+}
