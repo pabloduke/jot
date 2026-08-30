@@ -26,6 +26,7 @@ const gitignoreBody = `.DS_Store
 .jot/index.json
 .jot/maintain.json
 .jot/queries.json
+.jot/recency.json
 `
 
 const jotGuide = `# Jot Agent Contract

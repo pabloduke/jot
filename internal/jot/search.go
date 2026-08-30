@@ -44,6 +44,9 @@ type SearchOptions struct {
 	Since      time.Time
 	IncludeRaw bool
 	Full       bool // excerpts carry the whole passage rather than a 500-char window
+	// Prefix treats the final query token as a prefix. Type-ahead needs this:
+	// while someone is still typing "depl", an exact-token match finds nothing.
+	Prefix bool
 }
 
 func (o SearchOptions) perPage() int {
@@ -144,6 +147,9 @@ func rankChunks(all []Chunk, query string, opts SearchOptions) []Chunk {
 	if avgLen == 0 {
 		avgLen = 1
 	}
+	if opts.Prefix {
+		q = expandPrefix(q, df)
+	}
 	const k1, b = 1.5, 0.75
 	scored := make([]Chunk, 0, len(all))
 	for _, c := range all {
@@ -196,6 +202,44 @@ func rankChunks(all []Chunk, query string, opts SearchOptions) []Chunk {
 		perPage[c.ID]++
 	}
 	return result
+}
+
+// prefixExpansionLimit caps how many vocabulary terms one prefix may pull in,
+// so a single letter cannot turn into a scan of the whole vocabulary.
+const prefixExpansionLimit = 40
+
+// expandPrefix rewrites the final query token into every vocabulary term that
+// starts with it. The earlier tokens are left alone: only the word still being
+// typed should match loosely.
+func expandPrefix(q []string, df map[string]int) []string {
+	if len(q) == 0 {
+		return q
+	}
+	last := q[len(q)-1]
+	if len(last) < 2 {
+		return q
+	}
+	matches := make([]string, 0, prefixExpansionLimit)
+	for term := range df {
+		if term != last && strings.HasPrefix(term, last) {
+			matches = append(matches, term)
+		}
+	}
+	if len(matches) == 0 {
+		return q
+	}
+	// Rarer terms first, then alphabetical, so the cap keeps the most
+	// selective expansions and the result stays deterministic.
+	sort.Slice(matches, func(i, j int) bool {
+		if df[matches[i]] == df[matches[j]] {
+			return matches[i] < matches[j]
+		}
+		return df[matches[i]] < df[matches[j]]
+	})
+	if len(matches) > prefixExpansionLimit {
+		matches = matches[:prefixExpansionLimit]
+	}
+	return append(append([]string(nil), q...), matches...)
 }
 
 func dedupe(in []string) []string {

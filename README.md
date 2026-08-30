@@ -61,7 +61,27 @@ jot serve --watch 5m        # also re-synchronize with GitHub on an interval
 
 `jot serve` binds `0.0.0.0` by default so the wiki is reachable from other devices on your network; pass `--bind 127.0.0.1` to restrict it to the local machine. Binding to every interface exposes compiled wiki pages to any device that can reach the port, so use it only on a trusted network. Raw captures and `.jot` metadata are never served.
 
-Pages show backlinks, declared sources, trust tier, and status. Search results highlight matched terms.
+### Navigation
+
+| Route | What it is |
+| --- | --- |
+| `/` | topics, plus what you edited most recently |
+| `/recent` | recently updated and longest untouched |
+| `/loose-ends` | what fell through: uncompiled captures, orphans, stale pages, stubs, unverified pages, open contradictions |
+| `/tags` | tag index and topic index |
+| `/graph` | link graph, clustered by topic; every node is a link |
+| `/random` | a random page |
+| `/log` | the knowledge log |
+
+Every page carries a contextual sidebar (siblings in the same topic, an outline of the page, the full topic tree collapsed, and your recently-read list), plus breadcrumbs, backlinks, "See also" from lexical similarity, declared sources, conflicts, trust and status chips, and an age chip that warns when a page has gone untouched for a long time.
+
+Search has type-ahead — the word you are still typing is matched as a prefix — and filters for type, topic, date, and whether to include raw captures.
+
+Recently-read is stored in your own browser and never reaches the server.
+
+**Keyboard:** <kbd>/</kbd> search, <kbd>j</kbd>/<kbd>k</kbd> move through results, <kbd>g</kbd> then <kbd>h</kbd>/<kbd>n</kbd>/<kbd>e</kbd>/<kbd>t</kbd>/<kbd>a</kbd>/<kbd>l</kbd>/<kbd>r</kbd> to jump, <kbd>?</kbd> for help.
+
+Edit times come from Git commit history when available, falling back to file mtimes.
 
 ## AI harness workflow
 
