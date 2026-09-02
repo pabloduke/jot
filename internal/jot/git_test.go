@@ -110,6 +110,34 @@ func TestFirstPublishEstablishesUpstream(t *testing.T) {
 	}
 }
 
+func TestSyncPushesCleanBranchAheadOfUpstream(t *testing.T) {
+	ctx := context.Background()
+	first, second := setupGitPair(t)
+	page := filepath.Join(first, "wiki", "work", "offline-capture.md")
+	if err := atomicWrite(page, []byte(validConcept), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := commitAll(ctx, first, "capture while offline"); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := gitDirty(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Fatal("expected clean worktree after local commit")
+	}
+	if err := syncBefore(ctx, first, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := command(ctx, second, "git", "pull", "--ff-only"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(second, "wiki", "work", "offline-capture.md")); err != nil {
+		t.Fatal("clean ahead commit was not pushed:", err)
+	}
+}
+
 func TestSyncPreservesConflictForResolution(t *testing.T) {
 	ctx := context.Background()
 	first, second := setupGitPair(t)

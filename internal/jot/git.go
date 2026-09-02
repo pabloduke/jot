@@ -131,6 +131,14 @@ func hasUpstream(ctx context.Context, root string) bool {
 	return err == nil
 }
 
+func aheadOfUpstream(ctx context.Context, root string) (bool, error) {
+	out, err := command(ctx, root, "git", "rev-list", "--count", "@{upstream}..HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "0", nil
+}
+
 func pushWithRetry(ctx context.Context, root string) error {
 	if !hasUpstream(ctx, root) {
 		branch := currentBranch(ctx, root)
@@ -204,7 +212,11 @@ func syncBefore(ctx context.Context, root string, allowAuthorityChange bool) err
 		}
 		return err
 	}
-	if dirty {
+	ahead, err := aheadOfUpstream(ctx, root)
+	if err != nil {
+		return err
+	}
+	if dirty || ahead {
 		return pushWithRetry(ctx, root)
 	}
 	return nil

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.pabloduke.jot",
+  "name": "Jot Capture",
+  "version": "0.1.0",
+  "author": "Pablo Duke",
+  "description": "Capture a note from the Omarchy bar and sync it to a Jot vault.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Jot Capture",
+    "description": "Capture and synchronize a note.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
